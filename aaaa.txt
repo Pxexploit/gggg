@@ -1,0 +1,145 @@
+<?php
+session_start();
+
+// Variáveis para mensagens
+$mensagem = "";
+$cadastroSucesso = false;
+
+// Verificação de acesso apenas para vendedores
+if (!isset($_SESSION['usuario_email']) || $_SESSION['usuario_tipo'] !== 'vendedor') {
+    echo "Você precisa estar logado como vendedor para acessar esta página.";
+    exit();
+} else {
+    // Conexão com o banco
+    $conn = new mysqli("localhost", "root", "", "sistema_login");
+    if ($conn->connect_error) {
+        die("Falha na conexão: " . $conn->connect_error);
+    }
+
+    // Verifica se o vendedor tem loja
+    $stmt_vend = $conn->prepare("SELECT * FROM vendedor WHERE email = ?");
+    $stmt_vend->bind_param("s", $_SESSION['usuario_email']);
+    $stmt_vend->execute();
+    $res_vend = $stmt_vend->get_result();
+    $vendedor = $res_vend->fetch_assoc();
+    $id_loja = $vendedor['id_loja'];
+
+    // Se não tem loja vinculada, redireciona
+    if (is_null($id_loja)) {
+        $mensagem = "Você não possui uma loja cadastrada no nosso sistema.";
+    } else {
+        // Excluir os itens de venda associados à loja
+        $stmt_delete_items = $conn->prepare("DELETE FROM item_venda WHERE id_venda IN (SELECT id_venda FROM venda WHERE id_loja = ?)");
+        $stmt_delete_items->bind_param("i", $id_loja);
+        $stmt_delete_items->execute();
+
+        // Excluir as vendas associadas à loja
+        $stmt_delete_vendas = $conn->prepare("DELETE FROM venda WHERE id_loja = ?");
+        $stmt_delete_vendas->bind_param("i", $id_loja);
+        $stmt_delete_vendas->execute();
+
+        // Remover os produtos da loja
+        $stmt_delete_produtos = $conn->prepare("DELETE FROM produto WHERE id_loja = ?");
+        $stmt_delete_produtos->bind_param("i", $id_loja);
+        $stmt_delete_produtos->execute();
+
+        // Remover o vínculo da loja com o vendedor
+        $stmt_update_vend = $conn->prepare("UPDATE vendedor SET id_loja = NULL WHERE email = ?");
+        $stmt_update_vend->bind_param("s", $_SESSION['usuario_email']);
+
+        if ($stmt_update_vend->execute()) {
+            // Agora, excluir a loja
+            $stmt_delete_loja = $conn->prepare("DELETE FROM loja WHERE id_loja = ?");
+            $stmt_delete_loja->bind_param("i", $id_loja);
+
+            if ($stmt_delete_loja->execute()) {
+                $mensagem = "Loja excluída com sucesso!";
+                $cadastroSucesso = true;
+            } else {
+                $mensagem = "Erro ao excluir a loja: " . $stmt_delete_loja->error;
+            }
+        } else {
+            $mensagem = "Erro ao desvincular a loja do vendedor: " . $stmt_update_vend->error;
+        }
+    }
+
+    $conn->close();
+}
+?>
+
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excluir Loja</title>
+    <link rel="stylesheet" href="../css/cdstroloja.css">
+</head>
+<body>
+
+    <?php if (!empty($mensagem)): ?>
+        <div id="mensagemdeubom" style="background: #D95301;" class="<?php echo $cadastroSucesso ? '' : 'erro'; ?>">
+            <?php echo $mensagem; ?>
+        </div>
+    <?php endif; ?>
+
+    <div class="container">
+        <h2>Cadastrar Loja</h2>
+
+        <form action="cadastroloja.php" method="POST">
+            <label for="nome_loja">Nome da Loja:</label>
+            <input type="text" id="nome_loja" name="nome_loja" required>
+
+            <label for="endereco_loja">Endereço da Loja:</label>
+            <input type="text" id="endereco_loja" name="endereco_loja" required>
+
+            <label for="telefone_loja">Telefone/WhatsApp da Loja:</label>
+            <input type="text" id="telefone_loja" name="telefone_loja" required>
+
+            <label for="cnpj_cpf_loja">CNPJ ou CPF da Loja:</label>
+            <input type="text" id="cnpj_cpf_loja" name="cnpj_cpf_loja" required>
+
+            <button type="submit" id="botaosubmit">Cadastrar Loja</button>
+            <button type="button" onclick="window.location.href='../php/MenuVendedor.php'">Voltar ao Menu</button>
+        </form>
+    </div>
+
+    <!-- Biblioteca IMask.js para máscaras -->
+    <script src="https://unpkg.com/imask"></script>
+    <script>
+        // Máscara de telefone
+        var telefoneInput = document.getElementById('telefone_loja');
+        if (telefoneInput) {
+            IMask(telefoneInput, {
+                mask: '(00) 00000-0000'
+            });
+        }
+
+        // Máscara dinâmica para CPF ou CNPJ
+        var cnpjCpfInput = document.getElementById('cnpj_cpf_loja');
+        if (cnpjCpfInput) {
+            IMask(cnpjCpfInput, {
+                mask: [
+                    {
+                        mask: '000.000.000-00'  // CPF
+                    },
+                    {
+                        mask: '00.000.000/0000-00'  // CNPJ
+                    }
+                ],
+                dispatch: function (appended, dynamicMasked) {
+                    var number = (dynamicMasked.value + appended).replace(/\D/g, '');
+                    return number.length <= 11 ? dynamicMasked.compiledMasks[0] : dynamicMasked.compiledMasks[1];
+                }
+            });
+        }
+
+        // Exibe a mensagem ao carregar a página
+        window.onload = function() {
+            var msg = document.getElementById("mensagemdeubom");
+            if (msg) msg.style.display = "block";
+        };
+    </script>
+
+</body>
+</html>
